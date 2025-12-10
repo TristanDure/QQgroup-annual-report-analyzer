@@ -26,8 +26,17 @@ cd qqgroup-yearreport-analyzer
 ```bash
 pip install -r requirements.txt
 ```
+### 3. 配置
 
-### 3. （可选）安装图片导出功能
+```bash
+# 复制配置模板
+cp config.example.py config.py
+
+# 编辑配置文件
+vim config.py  # 或用其他编辑器
+```
+
+### 4. 安装图片导出功能
 如需将报告导出为图片，还需安装 Playwright：
 ```bash
 pip install playwright
