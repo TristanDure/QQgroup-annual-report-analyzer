@@ -57,6 +57,10 @@ class ChatAnalyzer:
 
     def _build_mappings(self):
         """构建 uin 到 name 的映射，优先保留有效的 name"""
+        # 先收集每个 uin 的所有 name（按顺序）和 sendMemberName
+        uin_names = defaultdict(list)
+        uin_member_names = {}  # 存储最后的 sendMemberName
+        
         for msg in self.messages:
             # 跳过机器人消息
             if self._is_bot_message(msg):
@@ -67,15 +71,40 @@ class ChatAnalyzer:
             name = sender.get('name', '').strip()  # 去除首尾空白
             msg_id = msg.get('messageId')
             
-            # 只有当 name 非空时才更新映射
-            # 如果该 uin 已有映射，只在当前 name 更长或原映射为空时才覆盖
+            # 收集 name
             if uin and name:
-                existing_name = self.uin_to_name.get(uin, '')
-                if not existing_name or len(name) > len(existing_name):
-                    self.uin_to_name[uin] = name
+                # 只在 name 与上一个不同时添加
+                if not uin_names[uin] or uin_names[uin][-1] != name:
+                    uin_names[uin].append(name)
+            
+            # 收集 sendMemberName（保留最后一个）
+            if uin:
+                raw_msg = msg.get('rawMessage', {})
+                send_member_name = raw_msg.get('sendMemberName', '').strip()
+                if send_member_name:
+                    uin_member_names[uin] = send_member_name
             
             if msg_id and uin:
                 self.msgid_to_sender[msg_id] = uin
+        
+        # 为每个 uin 选择最合适的 name
+        for uin, names in uin_names.items():
+            # 从后往前找第一个不等于uin的 name
+            chosen_name = None
+            for name in reversed(names):
+                if name != str(uin):
+                    chosen_name = name
+                    break
+            
+            # 如果所有 name 都等于 uin，使用 sendMemberName
+            if chosen_name is None:
+                if uin in uin_member_names:
+                    chosen_name = uin_member_names[uin]
+                elif names:
+                    chosen_name = names[-1]  # 兜底：使用最后一个
+            
+            if chosen_name:
+                self.uin_to_name[uin] = chosen_name
 
     def get_name(self, uin):
         return self.uin_to_name.get(uin, f"未知用户({uin})")
