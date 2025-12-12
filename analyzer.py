@@ -222,28 +222,44 @@ class ChatAnalyzer:
         total_word_count = sum(self.word_freq.values())
         
         for word, freq in self.word_freq.items():
-            # 1. TF (Term Frequency) - 使用对数平滑，避免高频词权重过大
-            tf = math.log(1 + freq)
+        # ... (TF 和 IDF 的计算保持不变)
+            tf_score = math.log(1 + freq)
+            idf_score = self.idf_dict.get(word, self.idf_median * 1.5)
 
-            # 2. IDF (Inverse Document Frequency)
-            # 如果词在IDF字典中，直接用。否则，说明是新词/梗/错别字，给一个较高的IDF值（用中位数或更高）
-            idf = self.idf_dict.get(word, self.idf_median * 1.5)
-            
-            # 3. 基础分 = TF * IDF
-            score = tf * idf
-            
-            # 4. 启发式调权 (可选，但效果好)
-            #    - 词长奖励：鼓励非单字词
-            if len(word) > 1:
-                score *= (1 + 0.1 * len(word))
-            #    - 新词发现奖励：如果是我们自己发现的新词，额外加分
-            if word in self.discovered_words:
-                score *= 1.2
-            #    - emoji奖励
-            if is_emoji(word):
-                score *= 1.5
+            base_score = tf_score * idf_score
 
-            self.interest_scores[word] = score
+            # --- 引入更多特征进行加权 ---
+
+            # 1. 词形特征 (Word Form Feature) - 奖励非中文/纯英文的混合词、特殊符号词
+            score_multiplier = 1.0
+            if re.search(r'[a-zA-Z]', word) and re.search(r'[\u4e00-\u9fff]', word): # 中英混合
+                score_multiplier *= 1.3
+            if re.search(r'[\d]', word): # 含数字
+                score_multiplier *= 1.1
+            if not word.isalnum(): # 包含特殊符号（非字母数字）
+                score_multiplier *= 1.2
+            if is_emoji(word): # emoji
+                score_multiplier *= 1.5
+
+            # 2. 凝聚度特征 (Cohesion Feature) - 来自新词发现
+            # 如果一个词是“新发现”的，说明它内部很凝聚，很可能是一个梗
+            if word in self.discovered_words or word in self.merged_words:
+                score_multiplier *= 1.4
+
+            # 3. 突发性/爆发性特征 (Burstiness Feature) - 【高级技巧】
+            # 一个词如果是突然在某个时间段内集中爆发，比一直平稳出现的词更可能是“梗”
+            # 实现：需要记录每个词出现的时间戳列表，然后计算时间分布的方差或峰度。
+            # 这里我们用一个简化的逻辑：如果一个词主要由少数人贡献，可能是一个小圈子黑话
+            contributors = self.word_contributors.get(word)
+            if contributors:
+                # 贡献者熵：熵越低，说明使用者越集中
+                entropy = calculate_entropy(contributors)
+                if entropy < 1.0 and len(contributors) > 1: # 熵很低但又不止一个人用
+                    score_multiplier *= 1.5
+
+            # 最终得分
+            final_score = base_score * score_multiplier
+            self.interest_scores[word] = final_score
     
     def _discover_new_words(self):
         """新词发现"""
