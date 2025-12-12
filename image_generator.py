@@ -169,65 +169,47 @@ class AIWordSelector:
 
 {words_text}
 
-要求：
-1. 选出的词要有代表性、有趣味、有群聊特色
-2. 优先选择使用量大且有特色的词
-3. 不要回避脏话粗话，只要有特色就可以
-4. 直接输出10个序号，用逗号分隔，例如: 1,5,8,12,15,23,30,42,56,78
-5. 只输出序号，不要有其他文字
-6. 尽量选择前100的，除非后面有特别有趣的词
-7. 尽量不要选择“啊”等无意义填充词，除非在例句中使用的特别有趣"""
+        你的任务是返回一个JSON对象，结构如下：
+        {{
+        "thinking": "在这里进行你的思考过程，分析哪些词更有趣，更有代表性。",
+        "selected_words": [
+            {{ "index": <原始序号>, "word": "<词语>", "reason": "<选择该词的简短理由>" }},
+            // 重复10次
+        ]
+        }}
+
+        请确保 'selected_words' 数组中正好有10个对象。'reason' 字段对于理解你的选择至关重要。
+        """
 
         try:
-            print("🤖 AI正在分析并选择年度热词...")
+            print("🤖 AI正在分析并选择年度热词 (JSON Mode)...")
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": self.SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt}
                 ],
-                max_tokens=100,
-                temperature=0.7
+                response_format={"type": "json_object"}, # <-- 核心改动
+                temperature=0.5
             )
             
-            # 清理响应中的思考过程
-            raw_result = response.choices[0].message.content.strip()
-            result = clean_ai_response(raw_result)
+            result_json = json.loads(response.choices[0].message.content)
+            selected_info = result_json.get("selected_words", [])
             
-            # 如果清理后为空，使用原始结果
-            if not result:
-                result = raw_result
-            
-            print(f"   AI返回: {result}")
-            
-            # 解析序号
-            indices = []
-            for part in result.replace('，', ',').split(','):
-                try:
-                    idx = int(part.strip())
-                    if 1 <= idx <= len(candidates):
-                        indices.append(idx - 1)  # 转为0索引
-                except:
-                    continue
-            
-            if len(indices) < 10:
-                print(f"⚠️ AI只选出{len(indices)}个词，自动补充前几个...")
-                # 补充前面的词直到10个
-                for i in range(len(candidates)):
-                    if i not in indices and len(indices) < 10:
-                        indices.append(i)
-            
-            indices = indices[:10]
-            selected = [candidates[i] for i in indices]
+            print(f"   AI思考过程: {result_json.get('thinking', '无')}")
+
+            # 从返回的JSON中直接提取所需信息，无需再进行脆弱的文本解析
+            selected_indices = [item['index'] - 1 for item in selected_info]
+            selected = [candidates[i] for i in selected_indices if 0 <= i < len(candidates)]
             
             print("\n✅ AI选词完成:")
-            for i, word_data in enumerate(selected, 1):
-                print(f"   {i}. {word_data['word']} ({word_data['freq']}次)")
-            
+            for i, item in enumerate(selected_info, 1):
+                print(f"   {i}. {item['word']} - 理由: {item['reason']}")
+                    
             return selected
-            
+                    
         except Exception as e:
-            print(f"❌ AI选词失败: {e}")
+            print(f"❌ AI选词失败 (JSON Mode): {e}")
             return None
 
 
@@ -343,19 +325,47 @@ class AICommentGenerator:
             return {w['word']: self._fallback_comment(w['word']) for w in words_data}
         
         print("🤖 正在生成AI锐评...")
-        comments = {}
-        for i, word_info in enumerate(words_data, 1):
-            word = word_info['word']
-            print(f"   [{i}/{len(words_data)}] {word}...", end=' ')
-            comment = self.generate_comment(
-                word, 
-                word_info['freq'], 
-                word_info.get('samples', [])
+         # 构建一个包含所有词信息的Prompt
+        words_info_list = []
+        for i, word_info in enumerate(words_data):
+            samples_text = '\n'.join(f'- {s[:50]}' for s in word_info.get('samples', [])[:3])
+            words_info_list.append(
+                f"词语 {i+1}:\n"
+                f"  - 词: {word_info['word']}\n"
+                f"  - 频率: {word_info['freq']}次\n"
+                f"  - 样本:\n{samples_text}"
             )
-            comments[word] = comment
-            print(f"✓")
-        
-        return comments
+        words_context = "\n\n".join(words_info_list)
+
+        user_prompt = f"""这里有{len(words_data)}个群聊热词，请为每一个词生成一句幽默、犀利的锐评。
+
+    {words_context}
+
+    请返回一个JSON对象，其中key是原始词语，value是对应的锐评。结构如下：
+    {{
+    "词语1": "对应的锐评1",
+    "词语2": "对应的锐评2",
+    ...
+    }}
+    """
+
+        try:
+            response = self.client.chat.completions.create(
+                model=os.getenv('OPENAI_MODEL', cfg.OPENAI_MODEL),
+                messages=[
+                    {"role": "system", "content": self.SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt}
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.8
+            )
+            comments = json.loads(response.choices[0].message.content)
+            print("✅ 批量生成完成")
+            return comments
+        except Exception as e:
+            print(f"   ⚠️ 批量AI生成失败: {e}")
+            # fallback to single calls or default comments
+            return {w['word']: self._fallback_comment(w['word']) for w in words_data}
 
 
 class ImageGenerator:

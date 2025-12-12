@@ -47,7 +47,56 @@ class ChatAnalyzer:
         self.single_char_stats = {}  # 单字统计
         self.cleaned_texts = []  # 缓存清洗后的文本
         self._build_mappings()
+        self.idf_dict, self.idf_median = self._load_jieba_idf()
+        self.interest_scores = {} # 新增一个属性来存储趣味性得分
+        
+    def _load_jieba_idf(self):
+        """加载jieba内置的IDF字典 (终极动态查找版)"""
+        idf_freq = {}
+        try:
+            import os
+            import jieba as jieba_main # 导入主模块
 
+            # 步骤1: 找到jieba库的安装根目录
+            # __file__ 属性会给出jieba/__init__.py文件的绝对路径
+            # os.path.dirname() 会得到 .../site-packages/jieba/ 这个目录
+            jieba_dir = os.path.dirname(jieba_main.__file__)
+
+            # 步骤2: 构造IDF文件的绝对路径
+            # 通常，idf.txt.big 和 analyse 子目录都在 jieba 根目录下
+            idf_path = os.path.join(jieba_dir, 'idf.txt.big')
+
+            # 步骤3: 检查文件是否存在，如果不存在，尝试在analyse子目录里找
+            if not os.path.exists(idf_path):
+                print(f"⚠️ 在jieba主目录未找到IDF文件: {idf_path}")
+                idf_path = os.path.join(jieba_dir, 'analyse', 'idf.txt') # 注意：老版本可能叫idf.txt
+                if not os.path.exists(idf_path):
+                    raise FileNotFoundError(f"在jieba目录 {jieba_dir} 及其子目录中均未找到IDF文件。")
+
+            print(f"🔍 成功定位到IDF文件: {idf_path}")
+
+            # 步骤4: 加载文件内容 (与之前相同)
+            with open(idf_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    try:
+                        word, freq = line.strip().split(' ')
+                        idf_freq[word] = float(freq)
+                    except ValueError:
+                        continue
+            
+            if not idf_freq:
+                raise ValueError("IDF字典为空，文件可能损坏或为空。")
+
+            idf_median = sorted(idf_freq.values())[len(idf_freq) // 2]
+            print(f"✅ 成功加载jieba内置IDF字典，共 {len(idf_freq)} 个词。")
+            return idf_freq, idf_median
+        
+        except Exception as e:
+            print(f"❌ [严重] 加载jieba IDF字典时发生致命错误: {e}。TF-IDF功能将失效。")
+            import traceback
+            traceback.print_exc() # 打印完整的错误堆栈，帮助我们看到更深层的原因
+            return {}, 9.0
+    
     def _is_bot_message(self, msg):
         """判断是否为机器人消息（基于 subMsgType）"""
         if not cfg.FILTER_BOT_MESSAGES:
@@ -131,6 +180,9 @@ class ChatAnalyzer:
         print("📈 分词统计...")
         self._tokenize_and_count()
         
+        print("✨ 计算热词趣味性得分 (TF-IDF)...") # 新增步骤
+        self._calculate_interest_scores() # 新增调用
+        
         print("🎮 趣味统计...")
         self._fun_statistics()
         
@@ -162,6 +214,37 @@ class ChatAnalyzer:
         else:
             print(f"   有效文本: {len(self.cleaned_texts)} 条, 跳过: {skipped} 条")
 
+    def _calculate_interest_scores(self):
+        """使用TF-IDF思想计算每个词的趣味性得分"""
+        if not self.word_freq:
+            return
+
+        total_word_count = sum(self.word_freq.values())
+        
+        for word, freq in self.word_freq.items():
+            # 1. TF (Term Frequency) - 使用对数平滑，避免高频词权重过大
+            tf = math.log(1 + freq)
+
+            # 2. IDF (Inverse Document Frequency)
+            # 如果词在IDF字典中，直接用。否则，说明是新词/梗/错别字，给一个较高的IDF值（用中位数或更高）
+            idf = self.idf_dict.get(word, self.idf_median * 1.5)
+            
+            # 3. 基础分 = TF * IDF
+            score = tf * idf
+            
+            # 4. 启发式调权 (可选，但效果好)
+            #    - 词长奖励：鼓励非单字词
+            if len(word) > 1:
+                score *= (1 + 0.1 * len(word))
+            #    - 新词发现奖励：如果是我们自己发现的新词，额外加分
+            if word in self.discovered_words:
+                score *= 1.2
+            #    - emoji奖励
+            if is_emoji(word):
+                score *= 1.5
+
+            self.interest_scores[word] = score
+    
     def _discover_new_words(self):
         """新词发现"""
         ngram_freq = Counter()
@@ -440,7 +523,7 @@ class ChatAnalyzer:
             filtered_freq[word] = freq
         
         self.word_freq = filtered_freq
-        
+        self.interest_scores = {k: v for k, v in self.interest_scores.items() if k in self.word_freq}
         # 采样
         for word in self.word_samples:
             samples = self.word_samples[word]
@@ -450,8 +533,18 @@ class ChatAnalyzer:
         print(f"   过滤后 {len(self.word_freq)} 个词")
 
     def get_top_words(self, n=None):
-        n = n or cfg.TOP_N
-        return self.word_freq.most_common(n)
+        # 之前是基于 self.word_freq 排序，现在基于 self.interest_scores
+        # self.word_freq 仍然在 _filter_results 中被过滤
+        # 我们需要在过滤后的词里进行排序
+        
+        # 确保 interest_scores 只包含过滤后的词
+        scored_words = {word: self.interest_scores[word] for word in self.word_freq if word in self.interest_scores}
+
+        sorted_words = sorted(scored_words.items(), key=lambda item: item[1], reverse=True)
+        
+        # 结果仍然返回 (词, 原始频率) 的格式，方便展示
+        return [(word, self.word_freq.get(word, 0)) for word, score in sorted_words[:n]]
+
 
     def get_word_detail(self, word):
         return {
