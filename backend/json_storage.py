@@ -56,6 +56,12 @@ class JSONStorageService:
         """获取报告文件路径"""
         return self.storage_dir / f"{report_id}.json"
     
+    def _get_image_cache_file(self, cache_key: str) -> Path:
+        """获取图片缓存文件路径"""
+        images_dir = self.storage_dir / "images"
+        images_dir.mkdir(exist_ok=True)
+        return images_dir / f"{cache_key}.json"
+    
     def init_database(self):
         """初始化存储（兼容接口）"""
         self._ensure_index()
@@ -187,3 +193,52 @@ class JSONStorageService:
         except Exception as e:
             print(f"❌ 删除报告失败: {e}")
             return False
+    
+    def get_cached_image(self, cache_key: str) -> Optional[Dict[str, Any]]:
+        """获取缓存的图片"""
+        try:
+            cache_file = self._get_image_cache_file(cache_key)
+            if not cache_file.exists():
+                return None
+            
+            cache_data = json.loads(cache_file.read_text(encoding='utf-8'))
+            
+            # 转换日期格式
+            if 'created_at' in cache_data:
+                cache_data['created_at'] = datetime.fromisoformat(cache_data['created_at'])
+            
+            return cache_data
+            
+        except Exception as e:
+            print(f"❌ 获取缓存图片失败: {e}")
+            return None
+    
+    def save_image_cache(self, cache_key: str, image_data: str) -> str:
+        """
+        保存图片到缓存
+        
+        Args:
+            cache_key: 缓存键
+            image_data: base64 编码的图片数据 (data:image/png;base64,...)
+        
+        Returns:
+            图片 URL (data URI)
+        """
+        try:
+            cache_data = {
+                "cache_key": cache_key,
+                "image_url": image_data,
+                "created_at": datetime.now().isoformat()
+            }
+            
+            cache_file = self._get_image_cache_file(cache_key)
+            cache_file.write_text(
+                json.dumps(cache_data, ensure_ascii=False),
+                encoding='utf-8'
+            )
+            
+            return image_data
+            
+        except Exception as e:
+            print(f"❌ 保存缓存图片失败: {e}")
+            return image_data

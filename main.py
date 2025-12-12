@@ -3,7 +3,6 @@
 """
 QQ群聊年度报告生成器 - 主入口
 
-Copyright (C) 2024 ZiHuixi
 Licensed under AGPL-3.0: https://www.gnu.org/licenses/agpl-3.0.html
 
 Usage:

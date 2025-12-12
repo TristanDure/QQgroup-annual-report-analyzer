@@ -3,21 +3,27 @@
 }
 
 body {
-  margin: 0;
+  /* margin: 0; */
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
-  background: #f6f7fb;
+  /* background: #f6f7fb; */ /* 注释掉以支持报告页面的深色背景 */
   color: #1f2937;
+  display: flex;
+  justify-content: center;
 }
 
 a {
   color: #2563eb;
 }
 
-.container {
+#app {
   width: 100%;
   max-width: 1080px;
-  margin: 32px auto 48px;
+  min-height: 100vh;
   padding: 0 16px;
+}
+
+.container {
+  margin: 32px 0 48px;
 }
 
 .card {

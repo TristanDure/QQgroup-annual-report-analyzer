@@ -13,7 +13,11 @@ Licensed under AGPL-3.0: https://www.gnu.org/licenses/agpl-3.0.html
 import os
 import json
 import uuid
+import base64
+import requests
+import asyncio
 from typing import List, Dict
+from io import BytesIO
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -30,7 +34,7 @@ if PROJECT_ROOT not in sys.path:
 
 import config
 import analyzer as analyzer_mod
-from image_generator import ImageGenerator
+from image_generator import ImageGenerator, AIWordSelector
 
 from backend.db_service import DatabaseService
 from backend.json_storage import JSONStorageService
@@ -157,7 +161,31 @@ def upload_and_analyze():
         
         # 如果是AI自动选词
         if auto_select:
-            selected_words = [w['word'] for w in all_words[:10]]
+            print("🤖 启动AI智能选词...")
+            ai_selector = AIWordSelector()
+            
+            if ai_selector.client:
+                # 使用AI从前200个词中智能选择10个
+                selected_word_objects = ai_selector.select_words(all_words, top_n=200)
+                
+                if selected_word_objects:
+                    # 按词频从高到低排序（与手动模式保持一致）
+                    selected_word_objects_sorted = sorted(
+                        selected_word_objects, 
+                        key=lambda w: w['freq'], 
+                        reverse=True
+                    )
+                    selected_words = [w['word'] for w in selected_word_objects_sorted]
+                    print(f"✅ AI选词成功（已按词频排序）: {', '.join(selected_words)}")
+                else:
+                    # AI失败，降级到前10个
+                    print("⚠️ AI选词失败，使用前10个热词")
+                    selected_words = [w['word'] for w in all_words[:10]]
+            else:
+                # AI未配置，使用前10个
+                print("⚠️ OpenAI未配置，使用前10个热词")
+                selected_words = [w['word'] for w in all_words[:10]]
+            
             result = finalize_report(
                 report_id=report_id,
                 analyzer=analyzer,
@@ -395,6 +423,134 @@ def delete_report(report_id):
         return jsonify({"success": True, "message": "报告已删除"})
     except Exception as exc:
         return jsonify({"error": f"删除失败: {exc}"}), 500
+
+
+@app.route("/api/reports/<report_id>/generate-image", methods=["POST"])
+def generate_report_image(report_id):
+    """
+    生成报告图片（后端渲染，支持缓存）
+    
+    Query参数：
+    - template: 模板ID（默认classic）
+    - force: 是否强制重新生成（默认false）
+    - format: 图片格式，可选 for_display（网页显示版）或 for_share（分享版，默认）
+    """
+    if not db_service:
+        return jsonify({"error": "数据库服务未初始化"}), 500
+    
+    try:
+        # 获取参数
+        data = request.get_json() or {}
+        template_id = data.get('template', 'classic')
+        force_regenerate = data.get('force', False)
+        image_format = data.get('format', 'for_share')  # for_share 或 for_display
+        
+        # 检查报告是否存在
+        report = db_service.get_report(report_id)
+        if not report:
+            return jsonify({"error": "报告不存在"}), 404
+        
+        # 检查缓存
+        cache_key = f"{report_id}_{template_id}_{image_format}"
+        if not force_regenerate:
+            cached_image = db_service.get_cached_image(cache_key)
+            if cached_image:
+                print(f"📦 返回缓存图片: {cache_key}")
+                return jsonify({
+                    "success": True,
+                    "image_url": cached_image['image_url'],
+                    "cached": True,
+                    "generated_at": str(cached_image['created_at'])
+                })
+        
+        # 生成新图片
+        print(f"🖼️ 开始生成图片: {report_id} (模板: {template_id}, 格式: {image_format})")
+        
+        # 构建前端URL
+        frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
+        report_url = f"{frontend_url}/report/{template_id}/{report_id}"
+        
+        # 添加格式参数
+        if image_format == 'for_share':
+            report_url += '?mode=share'
+        
+        # 使用 playwright 生成图片
+        image_data = asyncio.run(generate_image_with_playwright(report_url))
+        
+        if not image_data:
+            return jsonify({"error": "图片生成失败"}), 500
+        
+        # 保存到缓存
+        image_url = db_service.save_image_cache(cache_key, image_data)
+        
+        print(f"✅ 图片生成成功: {cache_key}")
+        
+        return jsonify({
+            "success": True,
+            "image_url": image_url,
+            "cached": False,
+            "generated_at": "now"
+        })
+        
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"生成失败: {exc}"}), 500
+
+
+async def generate_image_with_playwright(url):
+    """
+    使用 Playwright 无头浏览器生成图片
+    返回 base64 编码的图片数据
+    """
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        print("❌ 需要安装 Playwright: pip install playwright && playwright install chromium")
+        return None
+    
+    try:
+        async with async_playwright() as p:
+            # 启动浏览器
+            browser = await p.chromium.launch(
+                headless=True,
+                args=['--no-sandbox', '--disable-setuid-sandbox']
+            )
+            
+            # 创建页面，设置视口和设备缩放
+            page = await browser.new_page(
+                viewport={'width': 450, 'height': 800},
+                device_scale_factor=2  # 2倍分辨率
+            )
+            
+            print(f"   🌐 访问: {url}")
+            await page.goto(url, wait_until='networkidle', timeout=30000)
+            
+            # 等待内容渲染
+            await page.wait_for_timeout(3000)
+            
+            # 获取实际高度
+            height = await page.evaluate('document.body.scrollHeight')
+            await page.set_viewport_size({'width': 450, 'height': height + 50})
+            await page.wait_for_timeout(1000)
+            
+            # 截图
+            screenshot_bytes = await page.screenshot(
+                full_page=True,
+                type='png'
+            )
+            
+            await browser.close()
+            
+            # 转换为 base64
+            image_b64 = base64.b64encode(screenshot_bytes).decode('utf-8')
+            return f"data:image/png;base64,{image_b64}"
+            
+    except Exception as e:
+        print(f"❌ Playwright 生成失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
 
 
 def process_report_data_for_frontend(report):

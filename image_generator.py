@@ -113,6 +113,7 @@ class AIWordSelector:
 
     def __init__(self):
         self.client = None
+        self.model = None
         self._init_client()
     
     def _init_client(self):
@@ -120,10 +121,14 @@ class AIWordSelector:
         # 支持从环境变量读取API密钥
         api_key = os.getenv('OPENAI_API_KEY', cfg.OPENAI_API_KEY)
         base_url = os.getenv('OPENAI_BASE_URL', cfg.OPENAI_BASE_URL)
-        model = os.getenv('OPENAI_MODEL', cfg.OPENAI_MODEL)
+        self.model = os.getenv('OPENAI_MODEL', cfg.OPENAI_MODEL)
         
         if not api_key or api_key == "sk-your-api-key-here":
             print("⚠️ 未配置OpenAI API Key，无法使用AI选词")
+            return
+        
+        if not self.model:
+            print("⚠️ 未配置OpenAI模型")
             return
         
         try:
@@ -135,6 +140,7 @@ class AIWordSelector:
                 base_url=base_url,
                 http_client=httpx.Client(timeout=120.0)
             )
+            print(f"✅ AI客户端初始化成功 (模型: {self.model})")
         except Exception as e:
             print(f"⚠️ OpenAI客户端初始化失败: {e}")
     
@@ -175,7 +181,7 @@ class AIWordSelector:
         try:
             print("🤖 AI正在分析并选择年度热词...")
             response = self.client.chat.completions.create(
-                model=cfg.OPENAI_MODEL,
+                model=self.model,
                 messages=[
                     {"role": "system", "content": self.SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt}
@@ -294,14 +300,15 @@ class AICommentGenerator:
 直接输出锐评内容，不要加引号或其他格式。"""
 
         try:
+            # 尝试调用API，如果失败则降级处理
             response = self.client.chat.completions.create(
-                model=cfg.OPENAI_MODEL,
+                model=os.getenv('OPENAI_MODEL', cfg.OPENAI_MODEL),
                 messages=[
                     {"role": "system", "content": self.SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt}
                 ],
-                max_tokens=100,
-                temperature=0.9
+                max_tokens=150,
+                temperature=0.8
             )
             
             # 清理响应中的思考过程

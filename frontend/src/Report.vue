@@ -5,12 +5,10 @@
       v-if="report && templateComponent" 
       :is="templateComponent"
       :report="report"
-      :formatNumber="formatNumber"
-      :truncateText="truncateText"
-      :getTitleClass="getTitleClass"
-      :handleImageError="handleImageError"
-      :getHourHeight="getHourHeight"
-      :getPeakHour="getPeakHour"
+      :generating-image="generatingImage"
+      :image-url="imageUrl"
+      :image-error="imageError"
+      @generate-image="generateImage"
     />
     
     <!-- 模板加载失败提示 -->
@@ -48,17 +46,32 @@
 <script setup>
 import { ref, onMounted, shallowRef } from 'vue'
 import axios from 'axios'
+import html2canvas from 'html2canvas'
 
 const API_BASE = import.meta.env.VITE_API_BASE || '/api'
 
+// ========== 数据状态 ==========
 const report = ref(null)
 const loading = ref(true)
 const error = ref(null)
+
+// ========== 模板状态 ==========
 const templateComponent = shallowRef(null)
 const currentTemplateId = ref('')
 const currentReportId = ref('')
 
-// 获取路由参数（支持 /report/{id} 和 /report/{template}/{id}）
+// ========== 图片生成状态 ==========
+const generatingImage = ref(false)
+const imageUrl = ref('')
+const imageError = ref('')
+
+// ========== 路由参数解析 ==========
+/**
+ * 获取路由参数
+ * 支持两种格式：
+ * - /report/{id} - 使用默认 classic 模板
+ * - /report/{template}/{id} - 使用指定模板
+ */
 const getRouteParams = () => {
   const path = window.location.pathname
   // 尝试匹配 /report/{template}/{id}
@@ -74,24 +87,30 @@ const getRouteParams = () => {
   return null
 }
 
-// 保持向后兼容
 const getReportId = () => {
   const params = getRouteParams()
   return params ? params.reportId : null
 }
 
-// 动态加载模板组件
+// ========== 模板加载 ==========
+/**
+ * 动态加载模板组件
+ * @param {string} templateId - 模板ID
+ */
 const loadTemplate = async (templateId) => {
   try {
     const module = await import(`./templates/${templateId}.vue`)
     templateComponent.value = module.default
   } catch (err) {
-    console.warn(`模板 ${templateId} 加载失败，使用默认模板`, err)
+    console.warn(`模板 ${templateId} 加载失败`, err)
     templateComponent.value = null
   }
 }
 
-// 加载报告数据
+// ========== 报告数据加载 ==========
+/**
+ * 加载报告数据
+ */
 const loadReport = async () => {
   loading.value = true
   error.value = null
@@ -117,55 +136,61 @@ const loadReport = async () => {
   }
 }
 
-// 格式化数字
-const formatNumber = (num) => {
-  if (!num) return '0'
-  return num.toLocaleString('zh-CN')
-}
-
-// 截断文本
-const truncateText = (text, maxLength) => {
-  if (!text) return ''
-  if (text.length <= maxLength) return text
-  return text.substring(0, maxLength) + '...'
-}
-
-// 获取标题样式类
-const getTitleClass = (chatName) => {
-  const length = chatName ? chatName.length : 0
-  if (length <= 6) return 'short-title'
-  if (length <= 15) return 'medium-title'
-  if (length <= 24) return 'long-title'
-  return 'ultra-long-title'
-}
-
-// 处理图片加载错误
-const handleImageError = (e) => {
-  e.target.style.display = 'none'
-}
-
-// 获取时段高度
-const getHourHeight = (hour) => {
-  if (!hour) return 0
-  const maxHour = Math.max(...Object.values(report.value.statistics?.hourDistribution || {}))
-  return maxHour > 0 ? (hour / maxHour) * 100 : 0
-}
-
-// 获取最活跃时段
-const getPeakHour = () => {
-  const hourDistribution = report.value.statistics?.hourDistribution || {}
-  let maxHour = 0
-  let maxValue = 0
-  for (const [hour, value] of Object.entries(hourDistribution)) {
-    if (value > maxValue) {
-      maxValue = value
-      maxHour = parseInt(hour)
+// ========== 图片生成功能 ==========
+/**
+ * 生成报告图片分享（调用后端API）
+ */
+const generateImage = async () => {
+  if (generatingImage.value) return
+  
+  generatingImage.value = true
+  imageError.value = ''
+  
+  try {
+    const reportId = getReportId()
+    if (!reportId) {
+      throw new Error('报告ID不存在')
     }
+    
+    const params = getRouteParams()
+    const templateId = params?.templateId || 'classic'
+    
+    console.log('🖼️ 请求后端生成图片...')
+    
+    const { data } = await axios.post(
+      `${API_BASE}/reports/${reportId}/generate-image`,
+      {
+        template: templateId,
+        format: 'for_share',  // 分享版本
+        force: false  // 使用缓存
+      }
+    )
+    
+    if (data.success) {
+      imageUrl.value = data.image_url
+      
+      // 自动触发下载
+      const chatName = report.value?.chat_name || '报告'
+      const fileName = `${chatName}_年度报告_${new Date().getTime()}.png`
+      const link = document.createElement('a')
+      link.href = data.image_url
+      link.download = fileName
+      link.click()
+      
+      console.log('✅ 图片生成成功', data.cached ? '(来自缓存)' : '')
+    } else {
+      throw new Error(data.error || '图片生成失败')
+    }
+    
+  } catch (err) {
+    console.error('生成图片失败:', err)
+    imageError.value = err.response?.data?.error || err.message || '生成图片失败，请重试'
+  } finally {
+    generatingImage.value = false
   }
-  return maxHour
 }
 
-// 页面加载时获取数据和加载模板
+// ========== 生命周期 ==========
 onMounted(async () => {
   const params = getRouteParams()
   if (params) {
@@ -178,9 +203,6 @@ onMounted(async () => {
 </script>
 
 <style>
-/* 导入模板样式 */
-@import './report-styles.css';
-
 /* 报告页面包装器 - 居中并设置背景 */
 .report-page-wrapper {
   background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
@@ -192,6 +214,7 @@ onMounted(async () => {
   margin: 0;
 }
 
+/* ========== 加载状态 ========== */
 .loading-container, .error-container, .template-error-container {
   display: flex;
   flex-direction: column;
@@ -229,6 +252,7 @@ onMounted(async () => {
   margin: 0;
 }
 
+/* ========== 错误状态 ========== */
 .error-container, .template-error-container {
   gap: 20px;
 }

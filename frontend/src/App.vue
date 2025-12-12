@@ -73,7 +73,7 @@
         </div>
 
         <p style="margin-top: 15px;">
-          从下面的热词列表中选择最能代表这一年的词汇（最多选择10个）
+          从下面的热词列表中选择最能代表这一年的词汇（<strong style="color: #dc3545;">选择10个</strong>）
         </p>
 
         <!-- 词汇列表 -->
@@ -127,14 +127,20 @@
           </button>
         </div>
 
-        <div class="selected-summary">
-          已选择 {{ selectedWords.length }} 个词汇
+        <div class="selected-summary" :class="{ 'warning': selectedWords.length !== 10 }">
+          已选择 {{ selectedWords.length }} / 10 个词汇
+          <span v-if="selectedWords.length < 10" style="color: #dc3545; margin-left: 10px;">
+            （还需选择 {{ 10 - selectedWords.length }} 个）
+          </span>
+          <span v-else-if="selectedWords.length === 10" style="color: #28a745; margin-left: 10px;">
+            ✓ 已满足要求
+          </span>
         </div>
 
         <div class="flex" style="margin-top: 20px;">
           <button @click="step = 1; resetState()">返回</button>
           <button 
-            :disabled="selectedWords.length === 0 || loading" 
+            :disabled="selectedWords.length !== 10 || loading" 
             @click="finalizeReport"
             class="primary"
           >
@@ -493,8 +499,8 @@ const toggleWord = (word) => {
 
 // 步骤4-6: 最终化报告（手动选词后）
 const finalizeReport = async () => {
-  if (selectedWords.value.length === 0) {
-    alert('请至少选择一个词汇')
+  if (selectedWords.value.length !== 10) {
+    alert('必须选择正好10个词汇才能继续')
     return
   }
   
@@ -869,6 +875,12 @@ onMounted(() => {
   text-align: center;
   font-weight: 500;
   color: #0056b3;
+}
+
+.selected-summary.warning {
+  background: #fff3cd;
+  color: #856404;
+  border: 1px solid #ffeaa7;
 }
 
 .success-box {

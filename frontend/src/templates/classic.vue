@@ -1,5 +1,4 @@
 <template>
-  <!-- 经典黑金模板 - 默认样式 -->
   <div class="report-page-wrapper classic-template">
     <div class="report-container" v-if="report">
       <div class="stripe"></div>
@@ -134,7 +133,7 @@
         <div class="hour-chart-container">
           <div class="hour-chart">
             <div v-for="(hour, index) in report.statistics?.hourDistribution || {}" :key="index"
-                 class="hour-bar" :style="{ height: getHourHeight(hour) + '%' }"></div>
+                 class="hour-bar" :style="{ height: getHourHeightPercent(hour) + '%' }"></div>
           </div>
           <div class="hour-labels">
             <span>0时</span>
@@ -145,12 +144,49 @@
           </div>
           <div class="hour-peak">
             ⭐ 最活跃时段
-            <div class="hour-peak-badge">{{ getPeakHour() }}:00 - {{ getPeakHour() + 1 }}:00</div>
+            <div class="hour-peak-badge">{{ peakHourText }}</div>
           </div>
         </div>
       </div>
       
       <div class="stripe-diagonal"></div>
+      
+      <!-- 分享按钮区域 -->
+      <div class="share-section">
+        <div class="share-container">
+          <!-- 如果没有生成图片或有错误，显示生成按钮 -->
+          <button 
+            v-if="!imageUrl || imageError"
+            class="share-button" 
+            @click="$emit('generate-image')"
+            :disabled="generatingImage">
+            <span v-if="!generatingImage">
+              {{ imageError ? '🔄 重新生成' : '📸 生成图片分享' }}
+            </span>
+            <span v-else>
+              <span class="loading-dots">生成中</span>
+            </span>
+          </button>
+          
+          <!-- 如果图片已生成，显示下载和重新生成选项 -->
+          <div v-if="imageUrl && !imageError" class="share-result">
+            <div class="share-success">✅ 图片已生成并下载</div>
+            <div class="share-actions">
+              <a :href="imageUrl" :download="imageFileName" class="download-button">
+                💾 再次下载
+              </a>
+              <button class="regenerate-button" @click="$emit('generate-image')">
+                🔄 重新生成
+              </button>
+            </div>
+          </div>
+          
+          <!-- 显示错误信息 -->
+          <div v-if="imageError" class="share-error">
+            ❌ {{ imageError }}
+          </div>
+        </div>
+      </div>
       
       <!-- 页脚 -->
       <div class="footer">
@@ -165,23 +201,67 @@
 </template>
 
 <script setup>
-import { defineProps } from 'vue'
+import { computed } from 'vue'
+import { useReportUtils } from '../composables/useReportUtils'
 
+// ========== Props ==========
 const props = defineProps({
-  report: Object,
-  formatNumber: Function,
-  truncateText: Function,
-  getTitleClass: Function,
-  handleImageError: Function,
-  getHourHeight: Function,
-  getPeakHour: Function
+  report: {
+    type: Object,
+    required: true
+  },
+  generatingImage: {
+    type: Boolean,
+    default: false
+  },
+  imageUrl: {
+    type: String,
+    default: ''
+  },
+  imageError: {
+    type: String,
+    default: ''
+  }
+})
+
+// ========== Emits ==========
+defineEmits(['generate-image'])
+
+// ========== 使用工具函数 ==========
+const {
+  formatNumber,
+  truncateText,
+  getTitleClass,
+  handleImageError,
+  getHourHeight,
+  getPeakHour
+} = useReportUtils()
+
+// ========== 计算属性 ==========
+// 获取时段高度百分比
+const getHourHeightPercent = (hour) => {
+  return getHourHeight(hour, props.report.statistics?.hourDistribution)
+}
+
+// 获取最活跃时段文本
+const peakHourText = computed(() => {
+  const peak = getPeakHour(props.report.statistics?.hourDistribution)
+  return `${peak}:00 - ${peak + 1}:00`
+})
+
+// 获取图片文件名
+const imageFileName = computed(() => {
+  const chatName = props.report?.chat_name || '报告'
+  return `${chatName}_年度报告_${new Date().getTime()}.png`
 })
 </script>
 
-<style scoped>
+<style>
 @import '../report-styles.css';
+</style>
 
+<style scoped>
 .classic-template {
-  /* 经典黑金配色 - 使用原有样式 */
+  
 }
 </style>
