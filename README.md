@@ -241,7 +241,7 @@ AGPL-3.0 License
 
 ## 🙏 致谢
 
-- [qq-chat-exporter](https://github.com/Yiyuery/qq-chat-exporter) - QQ 聊天记录导出工具
+- [qq-chat-exporter](https://github.com/shuakami/qq-chat-exporter) - QQ 聊天记录导出工具
 - [jieba](https://github.com/fxsjy/jieba) - 中文分词库
 
 ## 📮 联系方式
